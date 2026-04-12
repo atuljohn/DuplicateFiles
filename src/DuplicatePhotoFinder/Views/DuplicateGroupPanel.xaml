@@ -83,9 +83,9 @@
                                                FontSize="10" TextTrimming="CharacterEllipsis"
                                                ToolTip="{Binding FolderPath}" Margin="0,2,0,0" />
                                     <TextBlock Foreground="{StaticResource TextSecondaryBrush}" FontSize="10" Margin="0,2,0,0">
-                                        <Run Text="{Binding ResolutionDisplay}" />
+                                        <Run Text="{Binding ResolutionDisplay, Mode=OneWay}" />
                                         <Run Text=" • " />
-                                        <Run Text="{Binding FileSizeDisplay}" />
+                                        <Run Text="{Binding FileSizeDisplay, Mode=OneWay}" />
                                     </TextBlock>
                                     <TextBlock Text="{Binding DateDisplay}"
                                                Foreground="{StaticResource TextSecondaryBrush}"
