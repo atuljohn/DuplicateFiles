@@ -1,0 +1,20 @@
+## .NET / C#
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.log
+
+## Published output
+publish/
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Tools (FFmpeg binaries — must be placed manually, not committed)
+src/DuplicatePhotoFinder/tools/
+
+## Claude Code local settings
+.claude/
