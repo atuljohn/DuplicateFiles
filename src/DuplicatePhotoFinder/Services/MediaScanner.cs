@@ -1,8 +1,6 @@
 using DuplicatePhotoFinder.Models;
 using Microsoft.Extensions.Logging;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Metadata.Profiles.Exif;
-using System.Threading.Channels;
+using System.Collections.Concurrent;
 
 namespace DuplicatePhotoFinder.Services;
 
@@ -15,161 +13,163 @@ public class MediaScanner
         _logger = logger;
     }
 
-    public async IAsyncEnumerable<MediaFile> ScanAsync(ScanOptions options,
+    /// <summary>
+    /// Phase 1: Fast scan - only path, size, date (NO image parsing, NO EXIF).
+    /// Uses parallel directory traversal and DirectoryInfo.EnumerateFiles which
+    /// returns FileInfo with size/date already populated (single stat per file).
+    /// Full metadata (width/height/EXIF) is extracted lazily in PopulateMetadataAsync
+    /// only for files that turn out to have duplicates.
+    /// </summary>
+    public IAsyncEnumerable<MediaFile> ScanAsync(ScanOptions options,
         IProgress<string>? progress = null,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        CancellationToken ct = default)
     {
-        var channel = Channel.CreateBounded<MediaFile>(capacity: Environment.ProcessorCount * 4);
-        var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 2);
-        var fileTasks = new List<Task>();
+        return ScanInternalAsync(options, progress, ct);
+    }
 
-        // Producer task: parallel directory traversal + metadata extraction
-        var producerTask = Task.Run(async () =>
+    private async IAsyncEnumerable<MediaFile> ScanInternalAsync(ScanOptions options,
+        IProgress<string>? progress,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var results = new ConcurrentQueue<MediaFile>();
+        var dirQueue = new ConcurrentQueue<DirectoryInfo>();
+
+        var rootInfo = new DirectoryInfo(options.RootFolder);
+        if (!rootInfo.Exists)
+            yield break;
+
+        var enumOptions = new EnumerationOptions
         {
-            try
-            {
-                var enumOptions = new EnumerationOptions
-                {
-                    RecurseSubdirectories = false,
-                    AttributesToSkip = FileAttributes.System | FileAttributes.Hidden
-                };
+            RecurseSubdirectories = false,
+            AttributesToSkip = FileAttributes.System | FileAttributes.Hidden | FileAttributes.ReparsePoint,
+            IgnoreInaccessible = true
+        };
 
-                // Recursively traverse directories in parallel (like WinDirStat)
-                await Parallel.ForEachAsync(
-                    GetDirectoriesRecursive(options.RootFolder, enumOptions),
-                    new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = ct },
-                    async (dir, _) =>
+        // Pending dirs counter tracks: (items in queue) + (items being processed).
+        // Initialize to 1 for the root, then enqueue.
+        int pendingDirs = 1;
+        dirQueue.Enqueue(rootInfo);
+
+        // Throttle progress updates to avoid flooding UI thread
+        long lastProgressTick = 0;
+        long fileCount = 0;
+
+        // Worker pool: each worker pulls a directory off the queue,
+        // enumerates its files and subdirs, then loops.
+        int workerCount = Environment.ProcessorCount * 2;
+        var workerTasks = new Task[workerCount];
+        for (int i = 0; i < workerCount; i++)
+        {
+            workerTasks[i] = Task.Run(() =>
+            {
+                bool done = false;
+                while (!done && !ct.IsCancellationRequested)
+                {
+                    if (dirQueue.TryDequeue(out var dir))
                     {
-                        ct.ThrowIfCancellationRequested();
                         try
                         {
-                            var files = Directory.EnumerateFiles(dir, "*", enumOptions);
-                            foreach (var path in files)
-                            {
-                                var ext = Path.GetExtension(path);
-                                if (!options.IsMediaFile(ext)) continue;
-
-                                progress?.Report(path);
-
-                                await semaphore.WaitAsync(ct);
-                                fileTasks.Add(Task.Run(async () =>
-                                {
-                                    try
-                                    {
-                                        MediaFile? file = null;
-                                        try
-                                        {
-                                            file = await BuildMediaFileAsync(path, options, ct);
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            _logger.LogWarning(ex, "Failed to read file metadata: {Path}", path);
-                                        }
-
-                                        if (file != null)
-                                            await channel.Writer.WriteAsync(file, ct);
-                                    }
-                                    finally
-                                    {
-                                        semaphore.Release();
-                                    }
-                                }, ct));
-                            }
+                            ProcessDirectory(dir, options, enumOptions, dirQueue, results, ref fileCount, ref lastProgressTick, ref pendingDirs, progress);
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogWarning(ex, "Failed to enumerate directory: {Dir}", dir);
+                            _logger.LogWarning(ex, "Failed to enumerate directory: {Dir}", dir.FullName);
                         }
-                    });
 
-                // Wait for all file extraction tasks to complete
-                await Task.WhenAll(fileTasks);
-            }
-            finally
-            {
-                channel.Writer.Complete();
-            }
-        }, ct);
-
-        // Consumer: yield results as they arrive from the channel
-        await foreach (var file in channel.Reader.ReadAllAsync(ct))
-        {
-            yield return file;
-        }
-
-        // Ensure producer completed (for exception propagation)
-        await producerTask;
-    }
-
-    private IAsyncEnumerable<string> GetDirectoriesRecursive(string rootPath, EnumerationOptions options)
-    {
-        return GetDirectoriesRecursiveImpl(rootPath, options);
-
-        async IAsyncEnumerable<string> GetDirectoriesRecursiveImpl(string path, EnumerationOptions opts)
-        {
-            yield return path;
-
-            IEnumerable<string> subdirs;
-            try
-            {
-                subdirs = Directory.EnumerateDirectories(path, "*", opts);
-            }
-            catch
-            {
-                yield break;
-            }
-
-            foreach (var subdir in subdirs)
-            {
-                await foreach (var dir in GetDirectoriesRecursiveImpl(subdir, opts))
-                {
-                    yield return dir;
-                }
-            }
-        }
-    }
-
-    private async Task<MediaFile> BuildMediaFileAsync(string path, ScanOptions options, CancellationToken ct)
-    {
-        var info = new FileInfo(path);
-        var ext = Path.GetExtension(path);
-        var kind = options.ImageExtensions.Contains(ext) ? MediaKind.Image : MediaKind.Video;
-
-        DateTime? dateTaken = null;
-        int? width = null, height = null;
-
-        if (kind == MediaKind.Image && !IsHeic(ext))
-        {
-            try
-            {
-                var imgInfo = await Image.IdentifyAsync(path, ct);
-                if (imgInfo != null)
-                {
-                    width = imgInfo.Width;
-                    height = imgInfo.Height;
-                    var exif = imgInfo.Metadata.ExifProfile;
-                    if (exif != null)
+                        // Decrement for the dir we just finished processing.
+                        // If this hits 0, all work is done.
+                        if (Interlocked.Decrement(ref pendingDirs) == 0)
+                            done = true;
+                    }
+                    else
                     {
-                        if (exif.TryGetValue(ExifTag.DateTimeOriginal, out var dt) && dt?.Value != null)
-                            dateTaken = ParseExifDate(dt.Value);
-                        else if (exif.TryGetValue(ExifTag.DateTime, out var dt2) && dt2?.Value != null)
-                            dateTaken = ParseExifDate(dt2.Value);
+                        // Queue empty but work may still be in progress elsewhere.
+                        if (Volatile.Read(ref pendingDirs) == 0)
+                            done = true;
+                        else
+                            Thread.SpinWait(100);
                     }
                 }
-            }
-            catch { /* non-fatal */ }
+            }, ct);
         }
 
-        return new MediaFile
+        // Drain results while workers are running. Yield as they arrive.
+        while (true)
         {
-            FullPath = path,
-            FileSizeBytes = info.Length,
-            DateModified = info.LastWriteTime,
-            DateTaken = dateTaken,
-            WidthPixels = width,
-            HeightPixels = height,
-            Kind = kind
-        };
+            ct.ThrowIfCancellationRequested();
+
+            if (results.TryDequeue(out var file))
+            {
+                yield return file;
+                continue;
+            }
+
+            // No results available. Check if workers are done.
+            if (workerTasks.All(t => t.IsCompleted))
+            {
+                // Drain any remaining results
+                while (results.TryDequeue(out file))
+                    yield return file;
+                break;
+            }
+
+            // Brief wait, then check again
+            await Task.Delay(10, ct);
+        }
+
+        // Propagate worker exceptions (if any)
+        await Task.WhenAll(workerTasks);
+    }
+
+    private void ProcessDirectory(
+        DirectoryInfo dir,
+        ScanOptions options,
+        EnumerationOptions enumOptions,
+        ConcurrentQueue<DirectoryInfo> dirQueue,
+        ConcurrentQueue<MediaFile> results,
+        ref long fileCount,
+        ref long lastProgressTick,
+        ref int pendingDirs,
+        IProgress<string>? progress)
+    {
+        // Enumerate files with FileInfo (size/date already loaded - no extra stat call)
+        foreach (var fi in dir.EnumerateFiles("*", enumOptions))
+        {
+            var ext = fi.Extension;
+            if (!options.IsMediaFile(ext)) continue;
+
+            var kind = options.ImageExtensions.Contains(ext) ? MediaKind.Image : MediaKind.Video;
+
+            // Fast path: NO image parsing, NO EXIF reads. Just metadata we already have.
+            results.Enqueue(new MediaFile
+            {
+                FullPath = fi.FullName,
+                FileSizeBytes = fi.Length,
+                DateModified = fi.LastWriteTime,
+                DateTaken = null,
+                WidthPixels = null,
+                HeightPixels = null,
+                Kind = kind
+            });
+
+            var count = Interlocked.Increment(ref fileCount);
+
+            // Throttle progress: only update every 50 files or every 100ms
+            var now = Environment.TickCount64;
+            var last = Interlocked.Read(ref lastProgressTick);
+            if (count % 50 == 0 || (now - last) > 100)
+            {
+                Interlocked.Exchange(ref lastProgressTick, now);
+                progress?.Report(fi.FullName);
+            }
+        }
+
+        // Enqueue subdirectories — increment BEFORE enqueue to keep counter accurate.
+        foreach (var sub in dir.EnumerateDirectories("*", enumOptions))
+        {
+            Interlocked.Increment(ref pendingDirs);
+            dirQueue.Enqueue(sub);
+        }
     }
 
     private static bool IsHeic(string ext) =>
