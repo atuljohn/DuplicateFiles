@@ -1,13 +1,27 @@
+using CommunityToolkit.Mvvm.ComponentModel;
+
 namespace DuplicatePhotoFinder.Models;
 
-public class ScanOptions
+public partial class ScanOptions : ObservableObject
 {
-    public string RootFolder { get; set; } = "";
-    public bool DetectExact { get; set; } = true;
-    public bool DetectPerceptual { get; set; } = true;
-    public bool DetectVideo { get; set; } = true;
-    public int PerceptualThreshold { get; set; } = 10; // Hamming distance 0-64
-    public int VideoFrameCount { get; set; } = 8;
+    [ObservableProperty]
+    private string rootFolder = "";
+
+    [ObservableProperty]
+    private bool detectExact = true;
+
+    [ObservableProperty]
+    private bool detectPerceptual = true;
+
+    [ObservableProperty]
+    private bool detectVideo = true;
+
+    [ObservableProperty]
+    private int perceptualThreshold = 10; // Hamming distance 0-64
+
+    [ObservableProperty]
+    private int videoFrameCount = 8;
+
     public List<string> PreferredFolderKeywords { get; set; } = new();
 
     public HashSet<string> ImageExtensions { get; set; } = new(StringComparer.OrdinalIgnoreCase)
