@@ -1,6 +1,8 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using DuplicatePhotoFinder.Models;
 using DuplicatePhotoFinder.Services;
+using System.Diagnostics;
 using System.Windows.Media.Imaging;
 
 namespace DuplicatePhotoFinder.ViewModels;
@@ -42,6 +44,25 @@ public partial class MediaFileViewModel : ObservableObject
         {
             IsLoadingThumbnail = false;
         }
+    }
+
+    [RelayCommand]
+    public void OpenFolder()
+    {
+        try
+        {
+            var folderPath = Path.GetDirectoryName(MediaFile.FullPath);
+            if (!string.IsNullOrEmpty(folderPath) && Directory.Exists(folderPath))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{MediaFile.FullPath}\"",
+                    UseShellExecute = true
+                });
+            }
+        }
+        catch { /* ignore errors */ }
     }
 
     private static string FormatSize(long bytes) => bytes switch
