@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/DuplicatePhotoFinder.Tests/DuplicatePhotoFinder.Tests.csproj" />
     <Project Path="src/DuplicatePhotoFinder/DuplicatePhotoFinder.csproj" />
   </Folder>
 </Solution>

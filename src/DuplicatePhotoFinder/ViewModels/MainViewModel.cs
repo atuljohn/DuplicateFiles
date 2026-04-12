@@ -47,6 +47,7 @@ public partial class MainViewModel : ObservableObject
             return;
 
         Groups.Clear();
+        ScanProgress.Reset(); // Reset timer
         _scanCts = new CancellationTokenSource();
         IsScanning = true;
         CurrentView = "Progress";

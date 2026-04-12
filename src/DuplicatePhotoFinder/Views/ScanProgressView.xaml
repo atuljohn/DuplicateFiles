@@ -23,7 +23,7 @@
                 </ProgressBar.Style>
             </ProgressBar>
 
-            <Grid Margin="0,0,0,16">
+            <Grid Margin="0,0,0,8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -36,6 +36,23 @@
                 </TextBlock>
                 <TextBlock Grid.Column="1" Foreground="{StaticResource AccentBrush}">
                     <Run Text="{Binding ScanProgress.ProgressPercent, StringFormat='{}{0:F0}%', Mode=OneWay}" />
+                </TextBlock>
+            </Grid>
+
+            <!-- Timer info -->
+            <Grid Margin="0,0,0,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Foreground="{StaticResource TextSecondaryBrush}" FontSize="12">
+                    <Run Text="Elapsed: " />
+                    <Run Text="{Binding ScanProgress.ElapsedTime, Mode=OneWay}" Foreground="{StaticResource TextPrimaryBrush}" FontWeight="Bold" />
+                </TextBlock>
+                <TextBlock Grid.Column="2" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12">
+                    <Run Text="Est. remaining: " />
+                    <Run Text="{Binding ScanProgress.EstimatedRemainingTime, Mode=OneWay}" Foreground="{StaticResource AccentBrush}" FontWeight="Bold" />
                 </TextBlock>
             </Grid>
 
