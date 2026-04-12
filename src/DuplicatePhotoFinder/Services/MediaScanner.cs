@@ -2,6 +2,7 @@ using DuplicatePhotoFinder.Models;
 using Microsoft.Extensions.Logging;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Metadata.Profiles.Exif;
+using System.Threading.Channels;
 
 namespace DuplicatePhotoFinder.Services;
 
@@ -18,29 +19,67 @@ public class MediaScanner
         IProgress<string>? progress = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
-        var files = Directory.EnumerateFiles(options.RootFolder, "*", SearchOption.AllDirectories);
+        var channel = Channel.CreateBounded<MediaFile>(capacity: Environment.ProcessorCount * 4);
+        var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 2);
+        var tasks = new List<Task>();
 
-        foreach (var path in files)
+        // Producer task: enumerate files and queue metadata extraction work
+        var producerTask = Task.Run(async () =>
         {
-            ct.ThrowIfCancellationRequested();
-            var ext = Path.GetExtension(path);
-            if (!options.IsMediaFile(ext)) continue;
-
-            progress?.Report(path);
-
-            MediaFile? file = null;
             try
             {
-                file = await BuildMediaFileAsync(path, options, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to read file metadata: {Path}", path);
-            }
+                var files = Directory.EnumerateFiles(options.RootFolder, "*", SearchOption.AllDirectories);
 
-            if (file != null)
-                yield return file;
+                foreach (var path in files)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var ext = Path.GetExtension(path);
+                    if (!options.IsMediaFile(ext)) continue;
+
+                    progress?.Report(path);
+
+                    await semaphore.WaitAsync(ct);
+                    tasks.Add(Task.Run(async () =>
+                    {
+                        try
+                        {
+                            MediaFile? file = null;
+                            try
+                            {
+                                file = await BuildMediaFileAsync(path, options, ct);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Failed to read file metadata: {Path}", path);
+                            }
+
+                            if (file != null)
+                                await channel.Writer.WriteAsync(file, ct);
+                        }
+                        finally
+                        {
+                            semaphore.Release();
+                        }
+                    }, ct));
+                }
+
+                // Wait for all extraction tasks to complete
+                await Task.WhenAll(tasks);
+            }
+            finally
+            {
+                channel.Writer.Complete();
+            }
+        }, ct);
+
+        // Consumer: yield results as they arrive from the channel
+        await foreach (var file in channel.Reader.ReadAllAsync(ct))
+        {
+            yield return file;
         }
+
+        // Ensure producer completed (for exception propagation)
+        await producerTask;
     }
 
     private async Task<MediaFile> BuildMediaFileAsync(string path, ScanOptions options, CancellationToken ct)

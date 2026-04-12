@@ -16,11 +16,23 @@ public class CryptographicHashService
     {
         try
         {
+            var fileInfo = new FileInfo(path);
+
+            // For small files (< 50MB), read into memory for faster hashing (fewer kernel round-trips)
+            if (fileInfo.Length < 50 * 1024 * 1024)
+            {
+                var data = await File.ReadAllBytesAsync(path, ct);
+                using var sha = SHA256.Create();
+                var bytes = sha.ComputeHash(data);
+                return Convert.ToHexString(bytes);
+            }
+
+            // For large files, use streaming with larger 4MB buffer for NVMe throughput
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
-                FileShare.Read, bufferSize: 131072, useAsync: true);
-            using var sha = SHA256.Create();
-            var bytes = await sha.ComputeHashAsync(stream, ct);
-            return Convert.ToHexString(bytes);
+                FileShare.Read, bufferSize: 4 * 1024 * 1024, useAsync: true);
+            using var sha256 = SHA256.Create();
+            var hashBytes = await sha256.ComputeHashAsync(stream, ct);
+            return Convert.ToHexString(hashBytes);
         }
         catch (Exception ex)
         {
