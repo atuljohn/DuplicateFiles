@@ -21,50 +21,69 @@ public class MediaScanner
     {
         var channel = Channel.CreateBounded<MediaFile>(capacity: Environment.ProcessorCount * 4);
         var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 2);
-        var tasks = new List<Task>();
+        var fileTasks = new List<Task>();
 
-        // Producer task: enumerate files and queue metadata extraction work
+        // Producer task: parallel directory traversal + metadata extraction
         var producerTask = Task.Run(async () =>
         {
             try
             {
-                var files = Directory.EnumerateFiles(options.RootFolder, "*", SearchOption.AllDirectories);
-
-                foreach (var path in files)
+                var enumOptions = new EnumerationOptions
                 {
-                    ct.ThrowIfCancellationRequested();
-                    var ext = Path.GetExtension(path);
-                    if (!options.IsMediaFile(ext)) continue;
+                    RecurseSubdirectories = false,
+                    AttributesToSkip = FileAttributes.System | FileAttributes.Hidden
+                };
 
-                    progress?.Report(path);
-
-                    await semaphore.WaitAsync(ct);
-                    tasks.Add(Task.Run(async () =>
+                // Recursively traverse directories in parallel (like WinDirStat)
+                await Parallel.ForEachAsync(
+                    GetDirectoriesRecursive(options.RootFolder, enumOptions),
+                    new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = ct },
+                    async (dir, _) =>
                     {
+                        ct.ThrowIfCancellationRequested();
                         try
                         {
-                            MediaFile? file = null;
-                            try
+                            var files = Directory.EnumerateFiles(dir, "*", enumOptions);
+                            foreach (var path in files)
                             {
-                                file = await BuildMediaFileAsync(path, options, ct);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogWarning(ex, "Failed to read file metadata: {Path}", path);
-                            }
+                                var ext = Path.GetExtension(path);
+                                if (!options.IsMediaFile(ext)) continue;
 
-                            if (file != null)
-                                await channel.Writer.WriteAsync(file, ct);
+                                progress?.Report(path);
+
+                                await semaphore.WaitAsync(ct);
+                                fileTasks.Add(Task.Run(async () =>
+                                {
+                                    try
+                                    {
+                                        MediaFile? file = null;
+                                        try
+                                        {
+                                            file = await BuildMediaFileAsync(path, options, ct);
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            _logger.LogWarning(ex, "Failed to read file metadata: {Path}", path);
+                                        }
+
+                                        if (file != null)
+                                            await channel.Writer.WriteAsync(file, ct);
+                                    }
+                                    finally
+                                    {
+                                        semaphore.Release();
+                                    }
+                                }, ct));
+                            }
                         }
-                        finally
+                        catch (Exception ex)
                         {
-                            semaphore.Release();
+                            _logger.LogWarning(ex, "Failed to enumerate directory: {Dir}", dir);
                         }
-                    }, ct));
-                }
+                    });
 
-                // Wait for all extraction tasks to complete
-                await Task.WhenAll(tasks);
+                // Wait for all file extraction tasks to complete
+                await Task.WhenAll(fileTasks);
             }
             finally
             {
@@ -80,6 +99,34 @@ public class MediaScanner
 
         // Ensure producer completed (for exception propagation)
         await producerTask;
+    }
+
+    private IAsyncEnumerable<string> GetDirectoriesRecursive(string rootPath, EnumerationOptions options)
+    {
+        return GetDirectoriesRecursiveImpl(rootPath, options);
+
+        async IAsyncEnumerable<string> GetDirectoriesRecursiveImpl(string path, EnumerationOptions opts)
+        {
+            yield return path;
+
+            IEnumerable<string> subdirs;
+            try
+            {
+                subdirs = Directory.EnumerateDirectories(path, "*", opts);
+            }
+            catch
+            {
+                yield break;
+            }
+
+            foreach (var subdir in subdirs)
+            {
+                await foreach (var dir in GetDirectoriesRecursiveImpl(subdir, opts))
+                {
+                    yield return dir;
+                }
+            }
+        }
     }
 
     private async Task<MediaFile> BuildMediaFileAsync(string path, ScanOptions options, CancellationToken ct)
