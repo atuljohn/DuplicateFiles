@@ -3,6 +3,8 @@ using DuplicatePhotoFinder.ViewModels;
 using FFMpegCore;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Memory;
 using System.IO;
 using System.Windows;
 using WpfApp = System.Windows.Application;
@@ -44,6 +46,14 @@ public partial class App : WpfApp
             else
                 _logger.Warning("FFmpeg tools directory not found at: {ToolsDir}", toolsDir);
 
+            // Cap ImageSharp memory pool to prevent multi-GB retention. Default pools
+            // 512×512 RGB buffers aggressively, which can balloon to >10 GB on libraries
+            // with many large images. Bound the allocator + flush retained buffers periodically.
+            Configuration.Default.MemoryAllocator = MemoryAllocator.Create(new MemoryAllocatorOptions
+            {
+                AllocationLimitMegabytes = 1024
+            });
+
             // Configure DI
             var services = new ServiceCollection();
             services.AddLogging(b => b.AddSerilog(dispose: true));
@@ -56,12 +66,17 @@ public partial class App : WpfApp
             services.AddSingleton<AutoSelectionService>();
             services.AddSingleton<RecycleBinService>();
             services.AddSingleton<PerceptualVerificationService>();
+            services.AddSingleton<DiagnosticsService>();
             services.AddSingleton<SyncService>();
             services.AddSingleton<SyncViewModel>();
             services.AddSingleton<MainViewModel>();
 
             Services = services.BuildServiceProvider();
             _logger.Information("Dependency injection configured successfully");
+
+            // Start the diagnostics heartbeat early so we have telemetry from launch
+            var diagnostics = Services.GetRequiredService<DiagnosticsService>();
+            _logger.Information("Diagnostics writing to: {Path}", DiagnosticsService.DiagnosticsDirectory);
 
             var mainWindow = new MainWindow
             {

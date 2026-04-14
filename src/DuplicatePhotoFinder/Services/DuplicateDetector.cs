@@ -122,9 +122,11 @@ public class DuplicateDetector
                 .Where(f => f.Kind == MediaKind.Image && f.ExactHash == null)
                 .ToList();
 
-            // Perceptual hashing is CPU-bound (JPEG decode). Oversubscribe heavily —
-            // user has plenty of RAM and we want every core saturated.
-            var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 4);
+            // Perceptual hashing is CPU-bound (JPEG decode) but ImageSharp pools
+            // pixel buffers per concurrent op, so 4× oversubscription was retaining
+            // multi-GB of pooled memory on libraries with large source images.
+            // 2× keeps cores busy without blowing the pool.
+            var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 2);
             var hashTasks = new List<Task>();
 
             foreach (var file in imageFiles)
@@ -135,9 +137,10 @@ public class DuplicateDetector
                 {
                     try
                     {
-                        var (hash, histogram) = await _perceptualHash.ComputeWithHistogramAsync(file.FullPath, ct);
+                        var (hash, _) = await _perceptualHash.ComputeWithHistogramAsync(file.FullPath, ct);
                         file.PerceptualHash = hash;
-                        file.GrayscaleHistogram = histogram;
+                        // Histogram intentionally dropped: 256 floats × every file = wasted memory,
+                        // and Pass 2 MSE verification is what we actually use for confirmation.
                     }
                     finally
                     {
@@ -150,6 +153,9 @@ public class DuplicateDetector
             }
 
             await Task.WhenAll(hashTasks);
+
+            // Release pooled image buffers retained from the perceptual hash decodes.
+            SixLabors.ImageSharp.Configuration.Default.MemoryAllocator.ReleaseRetainedResources();
 
             // All perceptual groups start as Unconfirmed — Pass 2 MSE check is always required.
             // Empirical analysis showed even Hamming=0 can be a false positive on real photos.

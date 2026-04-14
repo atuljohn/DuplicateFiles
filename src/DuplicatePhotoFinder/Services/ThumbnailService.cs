@@ -11,7 +11,10 @@ namespace DuplicatePhotoFinder.Services;
 public class ThumbnailService
 {
     private readonly ILogger<ThumbnailService> _logger;
-    private readonly Dictionary<string, WeakReference<BitmapSource>> _cache = new();
+    // Bounded LRU. Each frozen 256×256 BitmapSource is ~256 KB; cap ≈ 128 MB total.
+    private const int CacheCapacity = 500;
+    private readonly LinkedList<string> _lruOrder = new();
+    private readonly Dictionary<string, (LinkedListNode<string> node, BitmapSource bitmap)> _cache = new();
     private readonly object _cacheLock = new();
     private const int ThumbnailSize = 256;
 
@@ -43,8 +46,12 @@ public class ThumbnailService
     {
         lock (_cacheLock)
         {
-            if (_cache.TryGetValue(path, out var weak) && weak.TryGetTarget(out var cached))
-                return cached;
+            if (_cache.TryGetValue(path, out var entry))
+            {
+                _lruOrder.Remove(entry.node);
+                _lruOrder.AddFirst(entry.node);
+                return entry.bitmap;
+            }
         }
 
         BitmapSource? result = null;
@@ -68,14 +75,38 @@ public class ThumbnailService
 
         if (result != null)
         {
-            result.Freeze();
+            if (!result.IsFrozen) result.Freeze();
             lock (_cacheLock)
             {
-                _cache[path] = new WeakReference<BitmapSource>(result);
+                if (!_cache.ContainsKey(path))
+                {
+                    var node = _lruOrder.AddFirst(path);
+                    _cache[path] = (node, result);
+                    while (_cache.Count > CacheCapacity)
+                    {
+                        var oldest = _lruOrder.Last;
+                        if (oldest == null) break;
+                        _lruOrder.RemoveLast();
+                        _cache.Remove(oldest.Value);
+                    }
+                }
             }
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Drop all cached thumbnails. Call when leaving the review screen
+    /// or when memory pressure is detected.
+    /// </summary>
+    public void ClearCache()
+    {
+        lock (_cacheLock)
+        {
+            _cache.Clear();
+            _lruOrder.Clear();
+        }
     }
 
     private BitmapSource? GetShellThumbnail(string path)

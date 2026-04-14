@@ -44,71 +44,115 @@ public class PerceptualVerificationService
         IEnumerable<DuplicateGroup> candidateGroups,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
-        var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 2);
-        var channel = System.Threading.Channels.Channel.CreateUnbounded<VerificationResult>();
+        // Cap concurrency. Pair-loading at 512×512 RGB allocates ~1.5 MB pixel data per pair,
+        // and ImageSharp pools buffers per concurrent op. Keep this tight to avoid pool blowup.
+        int maxConcurrent = Math.Max(2, Environment.ProcessorCount / 2);
+        // Bounded channel applies backpressure on producers if the consumer (UI) falls behind.
+        var channel = System.Threading.Channels.Channel.CreateBounded<VerificationResult>(
+            new System.Threading.Channels.BoundedChannelOptions(maxConcurrent * 4)
+            {
+                SingleReader = true,
+                FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait
+            });
 
         var groups = candidateGroups.ToList();
-        int pending = groups.Count;
-
-        if (pending == 0)
+        if (groups.Count == 0)
         {
             channel.Writer.Complete();
         }
         else
         {
-            foreach (var group in groups)
+            // Gate task CREATION (not just execution) on the semaphore so we don't
+            // materialize thousands of Task closures at once — that's what was leaking.
+            _ = Task.Run(async () =>
             {
-                ct.ThrowIfCancellationRequested();
-                var g = group;
-                _ = Task.Run(async () =>
+                using var semaphore = new SemaphoreSlim(maxConcurrent);
+                var inFlight = new List<Task>();
+
+                try
                 {
-                    try
+                    foreach (var group in groups)
                     {
+                        ct.ThrowIfCancellationRequested();
                         await semaphore.WaitAsync(ct);
-                        try
+
+                        var g = group;
+                        inFlight.Add(Task.Run(async () =>
                         {
-                            var isGenuine = await VerifyGroupAsync(g, ct);
-                            await channel.Writer.WriteAsync(new VerificationResult(g.Id, isGenuine), ct);
-                        }
-                        finally
-                        {
-                            semaphore.Release();
-                        }
+                            try
+                            {
+                                var isGenuine = await VerifyGroupAsync(g, ct);
+                                await channel.Writer.WriteAsync(new VerificationResult(g.Id, isGenuine), ct);
+                            }
+                            catch (OperationCanceledException) { }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Verification failed for group {GroupId}", g.Id);
+                                try { await channel.Writer.WriteAsync(new VerificationResult(g.Id, true), ct); }
+                                catch { }
+                            }
+                            finally
+                            {
+                                semaphore.Release();
+                            }
+                        }, ct));
                     }
-                    catch (OperationCanceledException) { }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Verification failed for group {GroupId}", g.Id);
-                        // On error, treat as genuine (safe default — don't silently remove)
-                        try { await channel.Writer.WriteAsync(new VerificationResult(g.Id, true), ct); }
-                        catch { }
-                    }
-                    finally
-                    {
-                        if (Interlocked.Decrement(ref pending) == 0)
-                            channel.Writer.TryComplete();
-                    }
-                }, ct);
-            }
+
+                    await Task.WhenAll(inFlight);
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Verification orchestrator failed");
+                }
+                finally
+                {
+                    channel.Writer.TryComplete();
+                    // Release any pooled image buffers we accumulated during this pass.
+                    SixLabors.ImageSharp.Configuration.Default.MemoryAllocator.ReleaseRetainedResources();
+                }
+            }, ct);
         }
 
         await foreach (var result in channel.Reader.ReadAllAsync(ct))
             yield return result;
     }
 
+    // Cap pairwise comparisons per group. Large groups (e.g. 100+ files from a busy
+    // perceptual hash bucket) would otherwise do C(n,2) comparisons — 4,950 image
+    // loads for a 100-file group. Sampling a fixed budget of pairs is sufficient
+    // because we return on the first genuine match.
+    private const int MaxPairsPerGroup = 30;
+
     private async Task<bool> VerifyGroupAsync(DuplicateGroup group, CancellationToken ct)
     {
         var files = group.Files;
         if (files.Count < 2) return false;
 
-        // Group is genuine if at least one pair passes pixel-level MSE check
-        for (int i = 0; i < files.Count; i++)
+        // Group is genuine if at least one pair passes pixel-level MSE check.
+        // Compare each file against the first file (anchor) — O(n) instead of O(n²).
+        // Then if no anchor pair matches and the group is small, fall back to all-pairs.
+        var anchor = files[0];
+        for (int j = 1; j < files.Count && j <= MaxPairsPerGroup; j++)
         {
-            for (int j = i + 1; j < files.Count; j++)
+            ct.ThrowIfCancellationRequested();
+            if (await PairIsGenuineDuplicateAsync(anchor, files[j], ct))
+                return true;
+        }
+
+        // Anchor sweep failed — for small groups try a few additional non-anchor pairs
+        // (rare path; covers a transposed image being genuine vs. its peers but not the anchor).
+        if (files.Count <= 6)
+        {
+            int budget = MaxPairsPerGroup;
+            for (int i = 1; i < files.Count && budget > 0; i++)
             {
-                ct.ThrowIfCancellationRequested();
-                if (await PairIsGenuineDuplicateAsync(files[i], files[j], ct))
-                    return true;
+                for (int j = i + 1; j < files.Count && budget > 0; j++, budget--)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (await PairIsGenuineDuplicateAsync(files[i], files[j], ct))
+                        return true;
+                }
             }
         }
 

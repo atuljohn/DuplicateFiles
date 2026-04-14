@@ -14,6 +14,7 @@ public partial class MainViewModel : ObservableObject
     private readonly RecycleBinService _recycleBin;
     private readonly ThumbnailService _thumbnailService;
     private readonly PerceptualVerificationService _verifier;
+    private readonly DiagnosticsService _diagnostics;
 
     private CancellationTokenSource? _scanCts;
 
@@ -36,13 +37,15 @@ public partial class MainViewModel : ObservableObject
         RecycleBinService recycleBin,
         ThumbnailService thumbnailService,
         PerceptualVerificationService verifier,
-        SyncViewModel syncViewModel)
+        SyncViewModel syncViewModel,
+        DiagnosticsService diagnostics)
     {
         _detector = detector;
         _autoSelector = autoSelector;
         _recycleBin = recycleBin;
         _thumbnailService = thumbnailService;
         _verifier = verifier;
+        _diagnostics = diagnostics;
         Sync = syncViewModel;
         Sync.NavigateTo = view => CurrentView = view;
         CurrentView = "Home";
@@ -59,9 +62,13 @@ public partial class MainViewModel : ObservableObject
         _scanCts = new CancellationTokenSource();
         IsScanning = true;
         CurrentView = "Progress";
+        _diagnostics.Snapshot("ScanStarted");
 
         var progress = new Progress<ScanProgressUpdate>(update =>
-            ScanProgress.Apply(update));
+        {
+            ScanProgress.Apply(update);
+            _diagnostics.UpdateState(update.Phase, update.FilesProcessed, update.TotalFiles, update.GroupsFound, isBusy: true);
+        });
 
         try
         {
@@ -89,6 +96,7 @@ public partial class MainViewModel : ObservableObject
         finally
         {
             IsScanning = false;
+            _diagnostics.MarkIdle("ScanComplete");
         }
     }
 
