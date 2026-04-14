@@ -17,7 +17,10 @@ public partial class ScanOptions : ObservableObject
     private bool detectVideo = true;
 
     [ObservableProperty]
-    private int perceptualThreshold = 10; // Hamming distance 0-64
+    private int perceptualThreshold = 10; // Hamming distance 0-64 (candidate net — Pass 2 MSE filters false positives)
+
+    [ObservableProperty]
+    private int perceptualHighConfidenceThreshold = 3; // Hamming ≤ this = High confidence (no Pass 2 needed)
 
     [ObservableProperty]
     private int videoFrameCount = 8;

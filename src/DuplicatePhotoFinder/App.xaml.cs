@@ -55,6 +55,9 @@ public partial class App : WpfApp
             services.AddSingleton<DuplicateDetector>();
             services.AddSingleton<AutoSelectionService>();
             services.AddSingleton<RecycleBinService>();
+            services.AddSingleton<PerceptualVerificationService>();
+            services.AddSingleton<SyncService>();
+            services.AddSingleton<SyncViewModel>();
             services.AddSingleton<MainViewModel>();
 
             Services = services.BuildServiceProvider();

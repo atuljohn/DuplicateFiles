@@ -12,18 +12,40 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <Border Background="{StaticResource AccentBrush}" CornerRadius="4"
-                            Padding="6,2" Margin="0,0,10,0" VerticalAlignment="Center">
+                    <Border CornerRadius="4" Padding="6,2" Margin="0,0,10,0" VerticalAlignment="Center">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Confidence}" Value="Unconfirmed">
+                                        <Setter Property="Background" Value="#B8860B" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
                         <TextBlock Text="{Binding MatchKindDisplay}"
                                    Foreground="White" FontSize="11" FontWeight="SemiBold" />
                     </Border>
-                    <TextBlock Grid.Column="1" Text="{Binding Summary}"
-                               Foreground="{StaticResource TextPrimaryBrush}"
-                               VerticalAlignment="Center" FontSize="13" />
-                    <TextBlock Grid.Column="2"
-                               Text="{Binding WasteBytes, Converter={StaticResource FileSizeConverter}, StringFormat='Save {0}'}"
-                               Foreground="{StaticResource SuccessBrush}"
-                               VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Summary}"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   VerticalAlignment="Center" FontSize="13" />
+                        <TextBlock Text=" ⟳ Verifying..."
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   VerticalAlignment="Center" FontSize="11" Margin="8,0,0,0"
+                                   Visibility="{Binding IsVerifying, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding WasteBytes, Converter={StaticResource FileSizeConverter}, StringFormat='Save {0}'}"
+                                   Foreground="{StaticResource SuccessBrush}"
+                                   VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12" />
+                        <Button Content="Delete All" FontSize="10" Padding="6,3" Margin="0,0,4,0"
+                                Style="{StaticResource DangerButton}"
+                                Command="{Binding DeleteAllInGroupCommand}" />
+                        <Button Content="Keep All" FontSize="10" Padding="6,3"
+                                Style="{StaticResource SecondaryButton}"
+                                Command="{Binding KeepAllInGroupCommand}" />
+                    </StackPanel>
                 </Grid>
             </Expander.Header>
 
@@ -99,25 +121,36 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <Button Content="Keep" Grid.Column="0" Margin="0,0,2,0"
+                                    <Button Grid.Column="0" Margin="0,0,2,0"
                                             Padding="4,4" FontSize="11"
-                                            Command="{Binding DataContext.ToggleKeepCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                            Command="{Binding DataContext.KeepFileCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                             CommandParameter="{Binding}">
                                         <Button.Style>
                                             <Style TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
                                                 <Setter Property="Background" Value="{StaticResource KeepBrush}" />
+                                                <Setter Property="Opacity" Value="0.45" />
+                                                <Setter Property="Content" Value="Keep" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsRecommendedKeep}" Value="True">
+                                                        <Setter Property="Opacity" Value="1.0" />
+                                                        <Setter Property="Content" Value="★ Keep" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
                                             </Style>
                                         </Button.Style>
                                     </Button>
-                                    <Button Content="Delete" Grid.Column="1" Margin="2,0,0,0"
+                                    <Button Grid.Column="1" Margin="2,0,0,0"
                                             Padding="4,4" FontSize="11"
-                                            Command="{Binding DataContext.ToggleKeepCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                            Command="{Binding DataContext.MarkForDeletionCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                             CommandParameter="{Binding}">
                                         <Button.Style>
                                             <Style TargetType="Button" BasedOn="{StaticResource DangerButton}">
+                                                <Setter Property="Opacity" Value="0.45" />
+                                                <Setter Property="Content" Value="Delete" />
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsMarkedForDeletion}" Value="False">
-                                                        <Setter Property="Opacity" Value="0.4" />
+                                                    <DataTrigger Binding="{Binding IsMarkedForDeletion}" Value="True">
+                                                        <Setter Property="Opacity" Value="1.0" />
+                                                        <Setter Property="Content" Value="✕ Delete" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>

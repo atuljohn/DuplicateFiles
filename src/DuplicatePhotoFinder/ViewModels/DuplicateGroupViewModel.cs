@@ -12,12 +12,16 @@ public partial class DuplicateGroupViewModel : ObservableObject
     public ObservableCollection<MediaFileViewModel> Files { get; } = new();
 
     [ObservableProperty] private bool _isExpanded = true;
+    [ObservableProperty] private MatchConfidence _confidence;
+    [ObservableProperty] private bool _isVerifying;
 
-    public string MatchKindDisplay => Group.MatchKind switch
+    public string MatchKindDisplay => (Group.MatchKind, Confidence) switch
     {
-        DuplicateMatchKind.Exact => "Exact duplicate",
-        DuplicateMatchKind.Perceptual => "Similar image",
-        DuplicateMatchKind.Video => "Similar video",
+        (DuplicateMatchKind.Exact, _) => "Exact duplicate",
+        (DuplicateMatchKind.Perceptual, MatchConfidence.High) => "Similar image",
+        (DuplicateMatchKind.Perceptual, MatchConfidence.Unconfirmed) => "Possible duplicate",
+        (DuplicateMatchKind.Perceptual, MatchConfidence.Verified) => "Verified similar",
+        (DuplicateMatchKind.Video, _) => "Similar video",
         _ => "Duplicate"
     };
 
@@ -31,15 +35,31 @@ public partial class DuplicateGroupViewModel : ObservableObject
     public DuplicateGroupViewModel(DuplicateGroup group, ThumbnailService thumbnailService)
     {
         Group = group;
+        _confidence = group.Confidence;
+
+        // Auto-select for deletion only when we're confident (Exact or Verified).
+        // Possible/Unconfirmed duplicates start with nothing selected — user decides.
+        bool autoSelect = group.MatchKind == DuplicateMatchKind.Exact
+                       || group.Confidence == MatchConfidence.Verified;
+
         foreach (var file in group.Files)
         {
             var vm = new MediaFileViewModel(file, thumbnailService)
             {
-                IsRecommendedKeep = file == group.RecommendedKeep,
-                IsMarkedForDeletion = file != group.RecommendedKeep
+                IsRecommendedKeep = autoSelect && file == group.RecommendedKeep,
+                IsMarkedForDeletion = autoSelect && file != group.RecommendedKeep
             };
             Files.Add(vm);
         }
+    }
+
+    // Called by Pass 2 when a group is promoted from Unconfirmed → Verified
+    public void PromoteToVerified()
+    {
+        // Only update the badge — never auto-select possible duplicates for deletion.
+        // User reviews and decides manually.
+        Confidence = MatchConfidence.Verified;
+        IsVerifying = false;
     }
 
     public async Task LoadThumbnailsAsync(CancellationToken ct = default)
@@ -49,13 +69,44 @@ public partial class DuplicateGroupViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void ToggleKeep(MediaFileViewModel file)
+    private void KeepFile(MediaFileViewModel file)
     {
-        // Make this file the keep and mark all others for deletion
+        // Toggle keep on this file independently — does not affect other files
+        file.IsRecommendedKeep = !file.IsRecommendedKeep;
+        // If keeping, unmark for deletion
+        if (file.IsRecommendedKeep)
+            file.IsMarkedForDeletion = false;
+        OnPropertyChanged(nameof(WasteBytes));
+    }
+
+    [RelayCommand]
+    private void MarkForDeletion(MediaFileViewModel file)
+    {
+        // Toggle delete on this file independently — does not affect other files
+        file.IsMarkedForDeletion = !file.IsMarkedForDeletion;
+        // If marking for deletion, unmark keep
+        if (file.IsMarkedForDeletion)
+            file.IsRecommendedKeep = false;
+        OnPropertyChanged(nameof(WasteBytes));
+    }
+
+    [RelayCommand]
+    private void DeleteAllInGroup()
+    {
         foreach (var f in Files)
         {
-            f.IsRecommendedKeep = f == file;
-            f.IsMarkedForDeletion = f != file;
+            f.IsMarkedForDeletion = true;
+            f.IsRecommendedKeep = false;
+        }
+        OnPropertyChanged(nameof(WasteBytes));
+    }
+
+    [RelayCommand]
+    private void KeepAllInGroup()
+    {
+        foreach (var f in Files)
+        {
+            f.IsMarkedForDeletion = false;
         }
         OnPropertyChanged(nameof(WasteBytes));
     }

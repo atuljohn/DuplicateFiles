@@ -9,7 +9,12 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>DuplicatePhotoFinder</RootNamespace>
     <AssemblyName>DuplicatePhotoFinder</AssemblyName>
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="app.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.7" />

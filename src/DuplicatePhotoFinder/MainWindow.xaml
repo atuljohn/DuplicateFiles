@@ -2,18 +2,32 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:views="clr-namespace:DuplicatePhotoFinder.Views"
-        Title="Duplicate Photo &amp; Video Finder"
+        Title="Media Tools"
+        Icon="app.ico"
         Height="700" Width="1100"
         MinHeight="500" MinWidth="800"
         Background="#1E1E2E"
         WindowStartupLocation="CenterScreen">
 
     <Grid>
+        <!-- Home screen -->
+        <views:HomeView
+            Visibility="{Binding CurrentView, Converter={StaticResource StringToVisibilityConverter}, ConverterParameter=Home}" />
+
+        <!-- Duplicate finder flow -->
         <views:ScanConfigView
             Visibility="{Binding CurrentView, Converter={StaticResource StringToVisibilityConverter}, ConverterParameter=Config}" />
         <views:ScanProgressView
             Visibility="{Binding CurrentView, Converter={StaticResource StringToVisibilityConverter}, ConverterParameter=Progress}" />
         <views:DuplicateReviewView
             Visibility="{Binding CurrentView, Converter={StaticResource StringToVisibilityConverter}, ConverterParameter=Review}" />
+
+        <!-- Sync flow -->
+        <views:SyncConfigView
+            Visibility="{Binding CurrentView, Converter={StaticResource StringToVisibilityConverter}, ConverterParameter=SyncConfig}" />
+        <views:SyncProgressView
+            Visibility="{Binding CurrentView, Converter={StaticResource StringToVisibilityConverter}, ConverterParameter=SyncProgress}" />
+        <views:SyncResultView
+            Visibility="{Binding CurrentView, Converter={StaticResource StringToVisibilityConverter}, ConverterParameter=SyncResult}" />
     </Grid>
 </Window>

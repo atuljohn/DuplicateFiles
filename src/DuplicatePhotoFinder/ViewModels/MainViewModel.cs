@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using DuplicatePhotoFinder.Models;
 using DuplicatePhotoFinder.Services;
 using System.Collections.ObjectModel;
+using System.Windows;
 
 namespace DuplicatePhotoFinder.ViewModels;
 
@@ -12,6 +13,7 @@ public partial class MainViewModel : ObservableObject
     private readonly AutoSelectionService _autoSelector;
     private readonly RecycleBinService _recycleBin;
     private readonly ThumbnailService _thumbnailService;
+    private readonly PerceptualVerificationService _verifier;
 
     private CancellationTokenSource? _scanCts;
 
@@ -22,6 +24,7 @@ public partial class MainViewModel : ObservableObject
     public ScanProgressViewModel ScanProgress { get; } = new();
     public ScanOptions ScanOptions { get; } = new();
     public ObservableCollection<DuplicateGroupViewModel> Groups { get; } = new();
+    public SyncViewModel Sync { get; }
 
     public long TotalWasteBytes => Groups.Sum(g => g.WasteBytes);
     public string TotalWasteDisplay => FormatSize(TotalWasteBytes);
@@ -31,13 +34,18 @@ public partial class MainViewModel : ObservableObject
         DuplicateDetector detector,
         AutoSelectionService autoSelector,
         RecycleBinService recycleBin,
-        ThumbnailService thumbnailService)
+        ThumbnailService thumbnailService,
+        PerceptualVerificationService verifier,
+        SyncViewModel syncViewModel)
     {
         _detector = detector;
         _autoSelector = autoSelector;
         _recycleBin = recycleBin;
         _thumbnailService = thumbnailService;
-        CurrentView = "Config";
+        _verifier = verifier;
+        Sync = syncViewModel;
+        Sync.NavigateTo = view => CurrentView = view;
+        CurrentView = "Home";
     }
 
     [RelayCommand]
@@ -68,6 +76,8 @@ public partial class MainViewModel : ObservableObject
                 _ = vm.LoadThumbnailsAsync(_scanCts.Token);
             }
             CurrentView = "Review";
+            // Pass 2: verify uncertain groups in background (fire-and-forget, linked to scan cancellation)
+            _ = RunPass2Async(_scanCts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -79,6 +89,54 @@ public partial class MainViewModel : ObservableObject
         finally
         {
             IsScanning = false;
+        }
+    }
+
+    private async Task RunPass2Async(CancellationToken ct)
+    {
+        // Verify ALL perceptual groups — even H64=0 can be a false positive (empirically confirmed).
+        // Exact hash groups are byte-identical so skip those.
+        var candidates = Groups
+            .Where(g => g.Group.MatchKind == DuplicateMatchKind.Perceptual)
+            .ToList();
+
+        if (candidates.Count == 0) return;
+
+        foreach (var vm in candidates)
+            vm.IsVerifying = true;
+
+        try
+        {
+            await foreach (var result in _verifier.VerifyGroupsAsync(
+                candidates.Select(v => v.Group), ct))
+            {
+                var vm = candidates.FirstOrDefault(v => v.Group.Id == result.GroupId);
+                if (vm == null) continue;
+
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    if (!result.IsGenuineDuplicate && vm.Files.All(f => !f.IsMarkedForDeletion))
+                    {
+                        Groups.Remove(vm);
+                        OnPropertyChanged(nameof(TotalWasteDisplay));
+                        OnPropertyChanged(nameof(SelectedForDeletionCount));
+                    }
+                    else
+                    {
+                        vm.PromoteToVerified();
+                    }
+                });
+            }
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            // Clear any remaining spinners
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                foreach (var vm in candidates.Where(v => Groups.Contains(v)))
+                    vm.IsVerifying = false;
+            });
         }
     }
 
@@ -150,6 +208,24 @@ public partial class MainViewModel : ObservableObject
     private void GoBack()
     {
         CurrentView = "Config";
+    }
+
+    [RelayCommand]
+    private void OpenDuplicateFinder()
+    {
+        CurrentView = "Config";
+    }
+
+    [RelayCommand]
+    private void OpenSync()
+    {
+        CurrentView = "SyncConfig";
+    }
+
+    [RelayCommand]
+    private void GoHome()
+    {
+        CurrentView = "Home";
     }
 
     private static string FormatSize(long bytes) => bytes switch

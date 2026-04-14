@@ -1,0 +1,69 @@
+<UserControl x:Class="DuplicatePhotoFinder.Views.SyncProgressView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource BackgroundBrush}">
+    <Grid>
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Width="520">
+
+            <TextBlock Text="Folder Sync"
+                       Style="{StaticResource HeadingText}"
+                       FontSize="26" HorizontalAlignment="Center"
+                       Margin="0,0,0,8" />
+
+            <TextBlock Text="{Binding Sync.Phase}"
+                       Foreground="{StaticResource TextSecondaryBrush}"
+                       FontSize="15" HorizontalAlignment="Center"
+                       Margin="0,0,0,28" />
+
+            <!-- Progress bar -->
+            <ProgressBar Height="8"
+                         Background="{StaticResource SurfaceBrush}"
+                         Foreground="{StaticResource SuccessBrush}"
+                         BorderThickness="0"
+                         Margin="0,0,0,12"
+                         IsIndeterminate="{Binding Sync.IsSyncing}"
+                         Maximum="{Binding Sync.TotalFiles}"
+                         Value="{Binding Sync.ProcessedFiles}" />
+
+            <!-- Stats row -->
+            <Grid Margin="0,0,0,20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding Sync.ProcessedFiles}" Foreground="{StaticResource TextPrimaryBrush}"
+                               FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" />
+                    <TextBlock Text="files processed" Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="11" HorizontalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding Sync.TotalFiles}" Foreground="{StaticResource TextPrimaryBrush}"
+                               FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" />
+                    <TextBlock Text="total files" Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="11" HorizontalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding Sync.BytesTransferredDisplay}" Foreground="{StaticResource SuccessBrush}"
+                               FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" />
+                    <TextBlock Text="transferred" Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="11" HorizontalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Current file -->
+            <Border Background="{StaticResource SurfaceBrush}" CornerRadius="6" Padding="12,8" Margin="0,0,0,28">
+                <TextBlock Text="{Binding Sync.CurrentFile}"
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           FontSize="11" TextTrimming="CharacterEllipsis" />
+            </Border>
+
+            <!-- Cancel -->
+            <Button Content="Cancel" Style="{StaticResource SecondaryButton}"
+                    Padding="24,10" HorizontalAlignment="Center"
+                    Command="{Binding Sync.CancelCommand}" />
+
+        </StackPanel>
+    </Grid>
+</UserControl>

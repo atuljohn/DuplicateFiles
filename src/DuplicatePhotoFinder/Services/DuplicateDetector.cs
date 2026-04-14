@@ -122,7 +122,9 @@ public class DuplicateDetector
                 .Where(f => f.Kind == MediaKind.Image && f.ExactHash == null)
                 .ToList();
 
-            var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 2);
+            // Perceptual hashing is CPU-bound (JPEG decode). Oversubscribe heavily —
+            // user has plenty of RAM and we want every core saturated.
+            var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 4);
             var hashTasks = new List<Task>();
 
             foreach (var file in imageFiles)
@@ -133,7 +135,9 @@ public class DuplicateDetector
                 {
                     try
                     {
-                        file.PerceptualHash = await _perceptualHash.ComputeAsync(file.FullPath, ct);
+                        var (hash, histogram) = await _perceptualHash.ComputeWithHistogramAsync(file.FullPath, ct);
+                        file.PerceptualHash = hash;
+                        file.GrayscaleHistogram = histogram;
                     }
                     finally
                     {
@@ -147,17 +151,21 @@ public class DuplicateDetector
 
             await Task.WhenAll(hashTasks);
 
-            // Parallelize grouping using Parallel.For
+            // All perceptual groups start as Unconfirmed — Pass 2 MSE check is always required.
+            // Empirical analysis showed even Hamming=0 can be a false positive on real photos.
             var hashedImages = imageFiles.Where(f => f.PerceptualHash.HasValue).ToList();
-            var groups = FindPerceptualGroupsParallel(hashedImages, options.PerceptualThreshold);
+            var (highConfGroups, uncertainGroups) = FindPerceptualGroupsParallel(
+                hashedImages, options.PerceptualThreshold, options.PerceptualHighConfidenceThreshold);
 
-            foreach (var grp in groups)
+            foreach (var grp in highConfGroups.Concat(uncertainGroups))
             {
                 groupsFound++;
                 yield return new DuplicateGroup
                 {
                     MatchKind = DuplicateMatchKind.Perceptual,
-                    Files = grp
+                    Confidence = MatchConfidence.Unconfirmed,
+                    MinHammingDistance = grp.minDist,
+                    Files = grp.files
                 };
             }
         }
@@ -216,12 +224,15 @@ public class DuplicateDetector
         progress?.Report(new ScanProgressUpdate("Done", total, total, groupsFound, ""));
     }
 
-    private List<List<MediaFile>> FindPerceptualGroupsParallel(List<MediaFile> files, int threshold)
+    private (List<(List<MediaFile> files, int minDist)> highConf, List<(List<MediaFile> files, int minDist)> uncertain)
+        FindPerceptualGroupsParallel(List<MediaFile> files, int threshold, int highConfThreshold)
     {
-        if (files.Count == 0) return new();
+        if (files.Count == 0) return (new(), new());
 
         var parent = Enumerable.Range(0, files.Count).ToArray();
         var parentLock = new object();
+        // Track min Hamming distance per root group
+        var minDist = Enumerable.Repeat(int.MaxValue, files.Count).ToArray();
 
         int Find(int x)
         {
@@ -229,11 +240,13 @@ public class DuplicateDetector
             return x;
         }
 
-        void Union(int a, int b)
+        void Union(int a, int b, int dist)
         {
             lock (parentLock)
             {
-                parent[Find(a)] = Find(b);
+                int ra = Find(a), rb = Find(b);
+                parent[ra] = rb;
+                minDist[rb] = Math.Min(minDist[rb], Math.Min(minDist[ra], dist));
             }
         }
 
@@ -241,16 +254,24 @@ public class DuplicateDetector
         Parallel.For(0, files.Count, i =>
         {
             for (int j = i + 1; j < files.Count; j++)
-                if (PerceptualHashService.HammingDistance(files[i].PerceptualHash!.Value, files[j].PerceptualHash!.Value) <= threshold)
-                    Union(i, j);
+            {
+                var d = PerceptualHashService.HammingDistance(
+                    files[i].PerceptualHash!.Value, files[j].PerceptualHash!.Value);
+                if (d <= threshold)
+                    Union(i, j, d);
+            }
         });
 
-        return files
-            .Select((f, i) => (f, root: Find(i)))
+        var grouped = files
+            .Select((f, i) => (f, root: Find(i), dist: minDist[Find(i)]))
             .GroupBy(x => x.root)
             .Where(g => g.Count() > 1)
-            .Select(g => g.Select(x => x.f).ToList())
+            .Select(g => (files: g.Select(x => x.f).ToList(), minDist: g.First().dist))
             .ToList();
+
+        var highConf = grouped.Where(g => g.minDist <= highConfThreshold).ToList();
+        var uncertain = grouped.Where(g => g.minDist > highConfThreshold).ToList();
+        return (highConf, uncertain);
     }
 
     private List<List<MediaFile>> FindVideoGroupsParallel(List<MediaFile> files, int threshold)

@@ -88,11 +88,22 @@
                 </StackPanel>
             </Border>
 
-            <!-- Start button -->
-            <Button Content="Start Scan" Style="{StaticResource PrimaryButton}"
-                    FontSize="16" Padding="24,12"
-                    Command="{Binding StartScanCommand}"
-                    HorizontalAlignment="Right" />
+            <!-- Action row -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button Content="Home" Grid.Column="0"
+                        Style="{StaticResource SecondaryButton}"
+                        Padding="16,10"
+                        Command="{Binding GoHomeCommand}" />
+                <Button Content="Start Scan" Grid.Column="2"
+                        Style="{StaticResource PrimaryButton}"
+                        FontSize="16" Padding="24,12"
+                        Command="{Binding StartScanCommand}" />
+            </Grid>
 
         </StackPanel>
     </ScrollViewer>

@@ -1,0 +1,254 @@
+<UserControl x:Class="DuplicatePhotoFinder.Views.SyncResultView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:svc="clr-namespace:DuplicatePhotoFinder.Services"
+             Background="{StaticResource BackgroundBrush}">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" Padding="24,16">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="{Binding Sync.Phase}"
+                               Foreground="{StaticResource TextPrimaryBrush}"
+                               FontSize="20" FontWeight="Bold" />
+                    <TextBlock Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" Margin="0,4,0,0">
+                        <Run Text="{Binding Sync.SourceFolder, Mode=OneWay}" />
+                        <Run Text=" → " />
+                        <Run Text="{Binding Sync.DestFolder, Mode=OneWay}" />
+                    </TextBlock>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Summary stats -->
+        <Border Grid.Row="1" Padding="24,16">
+            <StackPanel>
+                <!-- Preview banner -->
+                <Border Background="#7C3AED22" BorderBrush="{StaticResource AccentBrush}"
+                        BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,16"
+                        Visibility="{Binding Sync.IsPreviewReady, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <TextBlock Foreground="{StaticResource AccentBrush}" FontSize="13">
+                        <Run FontWeight="SemiBold" Text="Preview mode — no files have been changed. " />
+                        <Run Text="Review the plan below, then click Execute Sync to apply." />
+                    </TextBlock>
+                </Border>
+
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" CornerRadius="6" Padding="12,10" Margin="0,0,6,0">
+                        <StackPanel HorizontalAlignment="Center">
+                            <TextBlock Text="{Binding Sync.PlanCopyCount}"
+                                       Foreground="{StaticResource SuccessBrush}"
+                                       FontSize="24" FontWeight="Bold" HorizontalAlignment="Center"
+                                       Visibility="{Binding Sync.IsPreviewReady, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            <TextBlock Text="{Binding Sync.CopiedCount}"
+                                       Foreground="{StaticResource SuccessBrush}"
+                                       FontSize="24" FontWeight="Bold" HorizontalAlignment="Center"
+                                       Visibility="{Binding Sync.IsPreviewReady, Converter={StaticResource InverseBoolToVisibilityConverter}}" />
+                            <TextBlock Text="to copy" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="1" Background="{StaticResource SurfaceBrush}" CornerRadius="6" Padding="12,10" Margin="0,0,6,0">
+                        <StackPanel HorizontalAlignment="Center">
+                            <TextBlock Text="{Binding Sync.PlanCopyBackCount}"
+                                       Foreground="{StaticResource AccentBrush}"
+                                       FontSize="24" FontWeight="Bold" HorizontalAlignment="Center"
+                                       Visibility="{Binding Sync.IsPreviewReady, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            <TextBlock Text="{Binding Sync.CopiedBackCount}"
+                                       Foreground="{StaticResource AccentBrush}"
+                                       FontSize="24" FontWeight="Bold" HorizontalAlignment="Center"
+                                       Visibility="{Binding Sync.IsPreviewReady, Converter={StaticResource InverseBoolToVisibilityConverter}}" />
+                            <TextBlock Text="copy back" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="2" Background="{StaticResource SurfaceBrush}" CornerRadius="6" Padding="12,10" Margin="0,0,6,0">
+                        <StackPanel HorizontalAlignment="Center">
+                            <TextBlock Text="{Binding Sync.PlanDeleteCount}"
+                                       Foreground="{StaticResource DangerBrush}"
+                                       FontSize="24" FontWeight="Bold" HorizontalAlignment="Center"
+                                       Visibility="{Binding Sync.IsPreviewReady, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            <TextBlock Text="{Binding Sync.DeletedCount}"
+                                       Foreground="{StaticResource DangerBrush}"
+                                       FontSize="24" FontWeight="Bold" HorizontalAlignment="Center"
+                                       Visibility="{Binding Sync.IsPreviewReady, Converter={StaticResource InverseBoolToVisibilityConverter}}" />
+                            <TextBlock Text="to delete" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="3" Background="{StaticResource SurfaceBrush}" CornerRadius="6" Padding="12,10" Margin="0,0,6,0">
+                        <StackPanel HorizontalAlignment="Center">
+                            <TextBlock Text="{Binding Sync.SkippedCount}"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       FontSize="24" FontWeight="Bold" HorizontalAlignment="Center" />
+                            <TextBlock Text="skipped" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="4" Background="{StaticResource SurfaceBrush}" CornerRadius="6" Padding="12,10">
+                        <StackPanel HorizontalAlignment="Center">
+                            <TextBlock Text="{Binding Sync.ErrorCount}"
+                                       Foreground="{StaticResource DangerBrush}"
+                                       FontSize="24" FontWeight="Bold" HorizontalAlignment="Center" />
+                            <TextBlock Text="errors" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <!-- Empty plan notice -->
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="6" Padding="16" Margin="0,12,0,0"
+                        Visibility="{Binding Sync.PlanIsEmpty, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <TextBlock Text="Everything is already in sync — no changes needed."
+                               Foreground="{StaticResource SuccessBrush}"
+                               FontSize="13" HorizontalAlignment="Center" />
+                </Border>
+            </StackPanel>
+        </Border>
+
+        <!-- Action log -->
+        <Border Grid.Row="2" Margin="24,0,24,0" Background="{StaticResource SurfaceBrush}" CornerRadius="8">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ItemsControl ItemsSource="{Binding Sync.Actions}" Margin="8">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type svc:SyncAction}">
+                            <Grid Margin="4,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <!-- Status icon -->
+                                <TextBlock Grid.Column="0" Width="18" FontSize="11" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="•" />
+                                            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Status}" Value="Completed">
+                                                    <Setter Property="Text" Value="✓" />
+                                                    <Setter Property="Foreground" Value="{StaticResource SuccessBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Status}" Value="Error">
+                                                    <Setter Property="Text" Value="✕" />
+                                                    <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <!-- Action type badge -->
+                                <Border Grid.Column="1" CornerRadius="3" Padding="5,1" Margin="4,0,8,0" VerticalAlignment="Center">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ActionType}" Value="CopyToDestination">
+                                                    <Setter Property="Background" Value="#16A34A33" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding ActionType}" Value="CopyToSource">
+                                                    <Setter Property="Background" Value="#7C3AED33" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding ActionType}" Value="DeleteFromDestination">
+                                                    <Setter Property="Background" Value="#DC262633" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock FontSize="10" FontWeight="SemiBold">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="" />
+                                                <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ActionType}" Value="CopyToDestination">
+                                                        <Setter Property="Text" Value="→ DEST" />
+                                                        <Setter Property="Foreground" Value="{StaticResource SuccessBrush}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding ActionType}" Value="CopyToSource">
+                                                        <Setter Property="Text" Value="← SRC" />
+                                                        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding ActionType}" Value="DeleteFromDestination">
+                                                        <Setter Property="Text" Value="DELETE" />
+                                                        <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Border>
+                                <!-- Relative path -->
+                                <TextBlock Grid.Column="2" Text="{Binding RelativePath}"
+                                           Foreground="{StaticResource TextPrimaryBrush}"
+                                           FontSize="12" VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding RelativePath}" />
+                                <!-- Error message -->
+                                <TextBlock Grid.Column="3" Text="{Binding ErrorMessage}"
+                                           Foreground="{StaticResource DangerBrush}"
+                                           FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Footer buttons -->
+        <Border Grid.Row="3" Padding="24,16">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Button Grid.Column="0" Content="Back to Config"
+                        Style="{StaticResource SecondaryButton}"
+                        Padding="16,8" Margin="0,0,8,0"
+                        Command="{Binding Sync.GoBackToConfigCommand}" />
+                <Button Grid.Column="1" Content="Home"
+                        Style="{StaticResource SecondaryButton}"
+                        Padding="16,8"
+                        Command="{Binding Sync.GoHomeCommand}" />
+
+                <!-- Execute Sync button — shown only in preview mode with pending actions -->
+                <Button Grid.Column="3" Content="Execute Sync"
+                        Style="{StaticResource PrimaryButton}"
+                        Background="{StaticResource SuccessBrush}"
+                        Padding="20,10" Margin="0,0,8,0"
+                        Command="{Binding Sync.ExecuteSyncCommand}"
+                        Visibility="{Binding Sync.HasPendingPlan, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+                <!-- Sync again button — shown after execution -->
+                <Button Grid.Column="4" Content="Sync Again"
+                        Style="{StaticResource PrimaryButton}"
+                        Padding="20,10"
+                        Command="{Binding Sync.GoBackToConfigCommand}"
+                        Visibility="{Binding Sync.IsPreviewReady, Converter={StaticResource InverseBoolToVisibilityConverter}}" />
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

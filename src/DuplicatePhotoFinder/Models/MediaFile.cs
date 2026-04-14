@@ -14,5 +14,7 @@ public class MediaFile
     public MediaKind Kind { get; init; }
     public string? ExactHash { get; set; }
     public ulong? PerceptualHash { get; set; }
+    public float[]? GrayscaleHistogram { get; set; }  // 256-bucket normalized, from Pass 1 decode
+    public ulong[]? PerceptualHash256 { get; set; }   // 4×ulong 256-bit dHash, populated in Pass 2
     public string? VideoFingerprint { get; set; }
 }
