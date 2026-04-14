@@ -52,11 +52,12 @@
                 </StackPanel>
             </Grid>
 
-            <!-- Current file -->
-            <Border Background="{StaticResource SurfaceBrush}" CornerRadius="6" Padding="12,8" Margin="0,0,0,28">
+            <!-- Current file — volatile, updates every file, fixed height prevents flicker -->
+            <Border Background="{StaticResource SurfaceBrush}" CornerRadius="6" Padding="12,8" Margin="0,0,0,28" Height="40">
                 <TextBlock Text="{Binding Sync.CurrentFile}"
                            Foreground="{StaticResource TextSecondaryBrush}"
-                           FontSize="11" TextTrimming="CharacterEllipsis" />
+                           FontSize="11" TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center" />
             </Border>
 
             <!-- Cancel -->

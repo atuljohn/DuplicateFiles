@@ -56,18 +56,21 @@
                 </TextBlock>
             </Grid>
 
-            <Border Background="{StaticResource SurfaceBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,16">
-                <StackPanel>
-                    <TextBlock Foreground="{StaticResource TextSecondaryBrush}" FontSize="12">
-                        <Run Text="Duplicate groups found: " />
-                        <Run Text="{Binding ScanProgress.GroupsFound, Mode=OneWay}"
-                             Foreground="{StaticResource AccentBrush}" FontWeight="Bold" />
-                    </TextBlock>
-                    <TextBlock Text="{Binding ScanProgress.CurrentFile}"
-                               Foreground="{StaticResource TextSecondaryBrush}"
-                               FontSize="11" TextTrimming="CharacterEllipsis"
-                               Margin="0,4,0,0" />
-                </StackPanel>
+            <!-- Static stats box — fixed height prevents reflow when groups count updates -->
+            <Border Background="{StaticResource SurfaceBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,8" Height="50">
+                <TextBlock Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" VerticalAlignment="Center">
+                    <Run Text="Duplicate groups found: " />
+                    <Run Text="{Binding ScanProgress.GroupsFound, Mode=OneWay}"
+                         Foreground="{StaticResource AccentBrush}" FontWeight="Bold" />
+                </TextBlock>
+            </Border>
+
+            <!-- Current file — volatile, updates every file, fixed height box prevents flicker of main UI -->
+            <Border Background="{StaticResource SurfaceBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,16" Height="40">
+                <TextBlock Text="{Binding ScanProgress.CurrentFile}"
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           FontSize="11" TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center" />
             </Border>
 
             <Button Content="Cancel" Style="{StaticResource SecondaryButton}"
