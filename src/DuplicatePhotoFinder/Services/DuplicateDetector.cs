@@ -185,8 +185,10 @@ public class DuplicateDetector
                 .Where(f => f.Kind == MediaKind.Video && f.ExactHash == null)
                 .ToList();
 
-            // Apply semaphore to video processing (was sequential before)
-            var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 2);
+            // Single-threaded video processing. Each FFmpeg process is CPU+I/O bound and
+            // can stall on corrupted files. Running them serially (1) avoids subprocess
+            // resource contention and makes timeouts/cleanup deterministic.
+            var semaphore = new SemaphoreSlim(1);
             var fpTasks = new List<Task>();
 
             foreach (var file in videoFiles)
