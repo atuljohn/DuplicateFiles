@@ -27,8 +27,8 @@ public class PerceptualHashServiceTests
             CreateTestImage(file1);
             CreateTestImage(file2);
 
-            var hash1 = await _service.ComputeAsync(file1);
-            var hash2 = await _service.ComputeAsync(file2);
+            var (hash1, _) = await _service.ComputeWithHistogramAsync(file1);
+            var (hash2, _) = await _service.ComputeWithHistogramAsync(file2);
 
             Assert.NotNull(hash1);
             Assert.NotNull(hash2);
@@ -52,8 +52,8 @@ public class PerceptualHashServiceTests
             CreateTestImageWithPattern(file1, isPattern1: true);
             CreateTestImageWithPattern(file2, isPattern1: false);
 
-            var hash1 = await _service.ComputeAsync(file1);
-            var hash2 = await _service.ComputeAsync(file2);
+            var (hash1, _) = await _service.ComputeWithHistogramAsync(file1);
+            var (hash2, _) = await _service.ComputeWithHistogramAsync(file2);
 
             Assert.NotNull(hash1);
             Assert.NotNull(hash2);
@@ -95,7 +95,7 @@ public class PerceptualHashServiceTests
     [Fact]
     public async Task ComputeAsync_NonExistentFile_ReturnsNull()
     {
-        var hash = await _service.ComputeAsync("/nonexistent/image.png");
+        var (hash, _) = await _service.ComputeWithHistogramAsync("/nonexistent/image.png");
         Assert.Null(hash);
     }
 

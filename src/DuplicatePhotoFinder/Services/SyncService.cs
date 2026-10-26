@@ -116,8 +116,11 @@ public class SyncService
         SyncOptions options,
         List<SyncAction> plan,
         IProgress<SyncProgressUpdate>? progress = null,
+        PauseGate? pauseGate = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
+        pauseGate ??= new PauseGate();
+
         int processed = 0;
         long bytesTransferred = 0;
         int total = plan.Count;
@@ -125,6 +128,7 @@ public class SyncService
         foreach (var action in plan)
         {
             ct.ThrowIfCancellationRequested();
+            await pauseGate.WaitAsync(ct);
 
             SyncAction result;
             try

@@ -17,10 +17,16 @@ public partial class MainViewModel : ObservableObject
     private readonly DiagnosticsService _diagnostics;
 
     private CancellationTokenSource? _scanCts;
+    private PauseGate? _scanPauseGate;
 
     [ObservableProperty] private object? _currentView;
     [ObservableProperty] private bool _isScanning;
+    [ObservableProperty] private bool _isPaused;
     [ObservableProperty] private bool _isDeletingFiles;
+
+    public string PauseButtonText => IsPaused ? "Resume" : "Pause";
+
+    partial void OnIsPausedChanged(bool value) => OnPropertyChanged(nameof(PauseButtonText));
 
     public ScanProgressViewModel ScanProgress { get; } = new();
     public ScanOptions ScanOptions { get; } = new();
@@ -60,6 +66,8 @@ public partial class MainViewModel : ObservableObject
         Groups.Clear();
         ScanProgress.Reset(); // Reset timer
         _scanCts = new CancellationTokenSource();
+        _scanPauseGate = new PauseGate();
+        IsPaused = false;
         IsScanning = true;
         CurrentView = "Progress";
         _diagnostics.Snapshot("ScanStarted");
@@ -72,7 +80,7 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            await foreach (var group in _detector.ScanAsync(ScanOptions, progress, _scanCts.Token))
+            await foreach (var group in _detector.ScanAsync(ScanOptions, progress, _scanPauseGate, _scanCts.Token))
             {
                 _autoSelector.ApplyRecommendation(group, ScanOptions);
                 var vm = new DuplicateGroupViewModel(group, _thumbnailService);
@@ -152,6 +160,22 @@ public partial class MainViewModel : ObservableObject
     private void CancelScan()
     {
         _scanCts?.Cancel();
+    }
+
+    [RelayCommand]
+    private void TogglePause()
+    {
+        if (_scanPauseGate == null) return;
+        if (IsPaused)
+        {
+            _scanPauseGate.Resume();
+            IsPaused = false;
+        }
+        else
+        {
+            _scanPauseGate.Pause();
+            IsPaused = true;
+        }
     }
 
     [RelayCommand]

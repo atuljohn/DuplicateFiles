@@ -1,7 +1,6 @@
 using DuplicatePhotoFinder.Models;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
-using System.Threading.Channels;
 
 namespace DuplicatePhotoFinder.Services;
 
@@ -37,8 +36,11 @@ public class DuplicateDetector
     public async IAsyncEnumerable<DuplicateGroup> ScanAsync(
         ScanOptions options,
         IProgress<ScanProgressUpdate>? progress = null,
+        PauseGate? pauseGate = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
+        pauseGate ??= new PauseGate();
+
         // Phase 1: Collect all files
         progress?.Report(new ScanProgressUpdate("Scanning files...", 0, 0, 0, ""));
         var allFiles = new List<MediaFile>();
@@ -54,50 +56,97 @@ public class DuplicateDetector
         int total = allFiles.Count;
         _logger.LogInformation("Found {Count} media files", total);
 
-        // Group by file size first (eliminates most non-duplicates)
         var sizeGroups = allFiles.GroupBy(f => f.FileSizeBytes)
             .Where(g => g.Count() > 1)
             .ToList();
 
+        var sizeGroupFiles = sizeGroups.SelectMany(g => g).ToList();
+
         var processed = 0;
         var groupsFound = 0;
+        long lastProgressTick = 0;
 
-        // Phase 2: Exact hash matching with increased parallelism
+        // Phase 2: Exact hash matching — two-pass prefix→full to cut I/O
         if (options.DetectExact)
         {
-            progress?.Report(new ScanProgressUpdate("Computing exact hashes...", 0, total, groupsFound, ""));
+            // 2a: Read first 64 KB of each same-size file
+            progress?.Report(new ScanProgressUpdate("Prefix-scanning files...", 0, total, groupsFound, ""));
 
-            // Increased to ProcessorCount * 2 for better CPU utilization during I/O waits
-            var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 2);
-            var hashTasks = new List<Task>();
+            var prefixData = new ConcurrentDictionary<string, (string? hash, bool isComplete)>();
+            var sem = new SemaphoreSlim(Environment.ProcessorCount * 2);
+            var tasks = new List<Task>();
 
-            foreach (var group in sizeGroups)
+            foreach (var file in sizeGroupFiles)
             {
-                foreach (var file in group)
+                ct.ThrowIfCancellationRequested();
+                await sem.WaitAsync(ct);
+                tasks.Add(Task.Run(async () =>
+                {
+                    try
+                    {
+                        await pauseGate.WaitAsync(ct);
+                        var result = await _cryptoHash.ComputePrefixHashAsync(file.FullPath, ct);
+                        prefixData[file.FullPath] = result;
+
+                        // For files ≤ 64 KB the prefix IS the full SHA-256
+                        if (result.hash != null && result.isComplete)
+                            file.ExactHash = result.hash;
+                    }
+                    finally
+                    {
+                        sem.Release();
+                        var p = Interlocked.Increment(ref processed);
+                        ThrottledProgress(ref lastProgressTick, progress,
+                            "Prefix-scanning files...", p, total, groupsFound, file.FullPath);
+                    }
+                }, ct));
+            }
+            await Task.WhenAll(tasks);
+
+            // 2b: Full-hash only files whose (size, prefix) matches another file
+            var needFullHash = sizeGroupFiles
+                .Where(f => f.ExactHash == null)
+                .Where(f => prefixData.TryGetValue(f.FullPath, out var pd) && pd.hash != null)
+                .GroupBy(f => (f.FileSizeBytes, prefixData[f.FullPath].hash!))
+                .Where(g => g.Count() > 1)
+                .SelectMany(g => g)
+                .ToList();
+
+            _logger.LogInformation(
+                "Prefix scan: {SizeGroupCount} same-size files, {NeedFull} need full hash",
+                sizeGroupFiles.Count, needFullHash.Count);
+
+            if (needFullHash.Count > 0)
+            {
+                progress?.Report(new ScanProgressUpdate(
+                    $"Full-hashing {needFullHash.Count} candidates...",
+                    processed, total, groupsFound, ""));
+
+                tasks.Clear();
+                foreach (var file in needFullHash)
                 {
                     ct.ThrowIfCancellationRequested();
-                    await semaphore.WaitAsync(ct);
-                    hashTasks.Add(Task.Run(async () =>
+                    await sem.WaitAsync(ct);
+                    tasks.Add(Task.Run(async () =>
                     {
                         try
                         {
+                            await pauseGate.WaitAsync(ct);
                             file.ExactHash = await _cryptoHash.ComputeSha256Async(file.FullPath, ct);
                         }
                         finally
                         {
-                            semaphore.Release();
+                            sem.Release();
                             var p = Interlocked.Increment(ref processed);
-                            progress?.Report(new ScanProgressUpdate("Computing exact hashes...",
-                                p, total, groupsFound, file.FullPath));
+                            ThrottledProgress(ref lastProgressTick, progress,
+                                "Full-hashing candidates...", p, total, groupsFound, file.FullPath);
                         }
                     }, ct));
                 }
+                await Task.WhenAll(tasks);
             }
 
-            await Task.WhenAll(hashTasks);
-
-            var exactGroups = sizeGroups
-                .SelectMany(g => g)
+            var exactGroups = sizeGroupFiles
                 .Where(f => f.ExactHash != null)
                 .GroupBy(f => f.ExactHash!)
                 .Where(g => g.Count() > 1);
@@ -113,7 +162,7 @@ public class DuplicateDetector
             }
         }
 
-        // Phase 3: Perceptual hash for images with parallelism
+        // Phase 3: Perceptual hash for images
         if (options.DetectPerceptual)
         {
             progress?.Report(new ScanProgressUpdate("Computing perceptual hashes...", processed, total, groupsFound, ""));
@@ -122,43 +171,35 @@ public class DuplicateDetector
                 .Where(f => f.Kind == MediaKind.Image && f.ExactHash == null)
                 .ToList();
 
-            // Perceptual hashing is CPU-bound (JPEG decode) but ImageSharp pools
-            // pixel buffers per concurrent op, so 4× oversubscription was retaining
-            // multi-GB of pooled memory on libraries with large source images.
-            // 2× keeps cores busy without blowing the pool.
-            var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 2);
-            var hashTasks = new List<Task>();
+            var sem = new SemaphoreSlim(Environment.ProcessorCount * 2);
+            var tasks = new List<Task>();
 
             foreach (var file in imageFiles)
             {
                 ct.ThrowIfCancellationRequested();
-                await semaphore.WaitAsync(ct);
-                hashTasks.Add(Task.Run(async () =>
+                await sem.WaitAsync(ct);
+                tasks.Add(Task.Run(async () =>
                 {
                     try
                     {
+                        await pauseGate.WaitAsync(ct);
                         var (hash, _) = await _perceptualHash.ComputeWithHistogramAsync(file.FullPath, ct);
                         file.PerceptualHash = hash;
-                        // Histogram intentionally dropped: 256 floats × every file = wasted memory,
-                        // and Pass 2 MSE verification is what we actually use for confirmation.
                     }
                     finally
                     {
-                        semaphore.Release();
+                        sem.Release();
                         var p = Interlocked.Increment(ref processed);
-                        progress?.Report(new ScanProgressUpdate("Computing perceptual hashes...",
-                            p, total, groupsFound, file.FullPath));
+                        ThrottledProgress(ref lastProgressTick, progress,
+                            "Computing perceptual hashes...", p, total, groupsFound, file.FullPath);
                     }
                 }, ct));
             }
 
-            await Task.WhenAll(hashTasks);
+            await Task.WhenAll(tasks);
 
-            // Release pooled image buffers retained from the perceptual hash decodes.
             SixLabors.ImageSharp.Configuration.Default.MemoryAllocator.ReleaseRetainedResources();
 
-            // All perceptual groups start as Unconfirmed — Pass 2 MSE check is always required.
-            // Empirical analysis showed even Hamming=0 can be a false positive on real photos.
             var hashedImages = imageFiles.Where(f => f.PerceptualHash.HasValue).ToList();
             var (highConfGroups, uncertainGroups) = FindPerceptualGroupsParallel(
                 hashedImages, options.PerceptualThreshold, options.PerceptualHighConfidenceThreshold);
@@ -176,7 +217,7 @@ public class DuplicateDetector
             }
         }
 
-        // Phase 4: Video fingerprinting with parallelism (was fully sequential before)
+        // Phase 4: Video fingerprinting — allow 2 concurrent FFmpeg processes
         if (options.DetectVideo)
         {
             progress?.Report(new ScanProgressUpdate("Computing video fingerprints...", processed, total, groupsFound, ""));
@@ -185,36 +226,33 @@ public class DuplicateDetector
                 .Where(f => f.Kind == MediaKind.Video && f.ExactHash == null)
                 .ToList();
 
-            // Single-threaded video processing. Each FFmpeg process is CPU+I/O bound and
-            // can stall on corrupted files. Running them serially (1) avoids subprocess
-            // resource contention and makes timeouts/cleanup deterministic.
-            var semaphore = new SemaphoreSlim(1);
-            var fpTasks = new List<Task>();
+            var sem = new SemaphoreSlim(2);
+            var tasks = new List<Task>();
 
             foreach (var file in videoFiles)
             {
                 ct.ThrowIfCancellationRequested();
-                await semaphore.WaitAsync(ct);
-                fpTasks.Add(Task.Run(async () =>
+                await sem.WaitAsync(ct);
+                tasks.Add(Task.Run(async () =>
                 {
                     try
                     {
+                        await pauseGate.WaitAsync(ct);
                         file.VideoFingerprint = await _videoFingerprint.ComputeFingerprintAsync(
                             file.FullPath, options.VideoFrameCount, ct);
                     }
                     finally
                     {
-                        semaphore.Release();
+                        sem.Release();
                         var p = Interlocked.Increment(ref processed);
-                        progress?.Report(new ScanProgressUpdate("Computing video fingerprints...",
-                            p, total, groupsFound, file.FullPath));
+                        ThrottledProgress(ref lastProgressTick, progress,
+                            "Computing video fingerprints...", p, total, groupsFound, file.FullPath);
                     }
                 }, ct));
             }
 
-            await Task.WhenAll(fpTasks);
+            await Task.WhenAll(tasks);
 
-            // Parallelize video grouping
             var fingerprinted = videoFiles.Where(f => f.VideoFingerprint != null).ToList();
             var videoGroups = FindVideoGroupsParallel(fingerprinted, options.PerceptualThreshold);
 
@@ -232,6 +270,19 @@ public class DuplicateDetector
         progress?.Report(new ScanProgressUpdate("Done", total, total, groupsFound, ""));
     }
 
+    private static void ThrottledProgress(ref long lastTick, IProgress<ScanProgressUpdate>? progress,
+        string phase, int processed, int total, int groupsFound, string currentFile)
+    {
+        if (progress == null) return;
+        var now = Environment.TickCount64;
+        var last = Interlocked.Read(ref lastTick);
+        if (now - last >= 100 || processed == total)
+        {
+            if (Interlocked.CompareExchange(ref lastTick, now, last) == last)
+                progress.Report(new ScanProgressUpdate(phase, processed, total, groupsFound, currentFile));
+        }
+    }
+
     private (List<(List<MediaFile> files, int minDist)> highConf, List<(List<MediaFile> files, int minDist)> uncertain)
         FindPerceptualGroupsParallel(List<MediaFile> files, int threshold, int highConfThreshold)
     {
@@ -239,7 +290,6 @@ public class DuplicateDetector
 
         var parent = Enumerable.Range(0, files.Count).ToArray();
         var parentLock = new object();
-        // Track min Hamming distance per root group
         var minDist = Enumerable.Repeat(int.MaxValue, files.Count).ToArray();
 
         int Find(int x)
@@ -258,7 +308,6 @@ public class DuplicateDetector
             }
         }
 
-        // Parallelize O(n²) comparisons
         Parallel.For(0, files.Count, i =>
         {
             for (int j = i + 1; j < files.Count; j++)
@@ -303,11 +352,9 @@ public class DuplicateDetector
             }
         }
 
-        // Pre-parse fingerprints once instead of O(N²) string splits
         var parsedFingerprints = files.Select(f =>
             f.VideoFingerprint!.Split(',').Select(ulong.Parse).ToArray()).ToList();
 
-        // Parallelize O(n²) comparisons
         Parallel.For(0, files.Count, i =>
         {
             for (int j = i + 1; j < files.Count; j++)

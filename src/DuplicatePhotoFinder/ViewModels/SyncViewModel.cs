@@ -11,6 +11,7 @@ public partial class SyncViewModel : ObservableObject
 {
     private readonly SyncService _syncService;
     private CancellationTokenSource? _cts;
+    private PauseGate? _pauseGate;
     private List<SyncAction>? _currentPlan;
 
     // ── Bindable options ─────────────────────────────────────────────────────
@@ -35,7 +36,12 @@ public partial class SyncViewModel : ObservableObject
     [ObservableProperty] private long _bytesTransferred;
     [ObservableProperty] private string _currentFile = string.Empty;
     [ObservableProperty] private bool _isSyncing;
+    [ObservableProperty] private bool _isPaused;
     [ObservableProperty] private bool _isPreviewReady;
+
+    public string PauseButtonText => IsPaused ? "Resume" : "Pause";
+
+    partial void OnIsPausedChanged(bool value) => OnPropertyChanged(nameof(PauseButtonText));
 
     // ── Result log ───────────────────────────────────────────────────────────
 
@@ -93,6 +99,8 @@ public partial class SyncViewModel : ObservableObject
         _currentPlan = null;
         IsPreviewReady = false;
         _cts = new CancellationTokenSource();
+        _pauseGate = new PauseGate();
+        IsPaused = false;
         IsSyncing = true;
         NavigateTo?.Invoke("SyncProgress");
 
@@ -137,6 +145,8 @@ public partial class SyncViewModel : ObservableObject
         Actions.Clear();
         IsPreviewReady = false;
         _cts = new CancellationTokenSource();
+        _pauseGate = new PauseGate();
+        IsPaused = false;
         IsSyncing = true;
         NavigateTo?.Invoke("SyncProgress");
 
@@ -160,7 +170,24 @@ public partial class SyncViewModel : ObservableObject
     [RelayCommand]
     private void Cancel()
     {
+        _pauseGate?.Resume();
         _cts?.Cancel();
+    }
+
+    [RelayCommand]
+    private void TogglePause()
+    {
+        if (_pauseGate == null) return;
+        if (IsPaused)
+        {
+            _pauseGate.Resume();
+            IsPaused = false;
+        }
+        else
+        {
+            _pauseGate.Pause();
+            IsPaused = true;
+        }
     }
 
     [RelayCommand]
@@ -193,7 +220,7 @@ public partial class SyncViewModel : ObservableObject
 
         var progress = new Progress<SyncProgressUpdate>(Apply);
 
-        await foreach (var action in _syncService.ExecuteAsync(options, plan, progress, ct))
+        await foreach (var action in _syncService.ExecuteAsync(options, plan, progress, _pauseGate, ct))
         {
             await Application.Current.Dispatcher.InvokeAsync(() =>
             {
